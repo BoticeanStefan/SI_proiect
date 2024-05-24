@@ -1,0 +1,177 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include "stm32f4xx.h"
+
+#define LED_PIN 5  // PA5 for onboard LED
+
+char board[3][3];
+
+void initializeBoard() {
+    int i, j;
+    for (i = 0; i < 3; i++) {
+        for (j = 0; j < 3; j++) {
+            board[i][j] = '-';
+        }
+    }
+}
+
+void displayBoard() {
+    int i, j;
+    printf("\n   0 1 2\n");
+    for (i = 0; i < 3; i++) {
+        printf("%d ", i);
+        for (j = 0; j < 3; j++) {
+            printf(" %c", board[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+int checkWin(char mark) {
+    int i;
+    for (i = 0; i < 3; i++) {
+        if (board[i][0] == mark && board[i][1] == mark && board[i][2] == mark)
+            return 1;
+        if (board[0][i] == mark && board[1][i] == mark && board[2][i] == mark)
+            return 1;
+    }
+    if ((board[0][0] == mark && board[1][1] == mark && board[2][2] == mark) ||
+        (board[0][2] == mark && board[1][1] == mark && board[2][0] == mark))
+        return 1;
+    return 0;
+}
+
+int checkDraw() {
+    int i, j;
+    for (i = 0; i < 3; i++) {
+        for (j = 0; j < 3; j++) {
+            if (board[i][j] == '-')
+                return 0;
+        }
+    }
+    return 1;
+}
+
+void LED_Init(void) {
+    RCC->AHB1ENR |= 0x01;  // Enable GPIOA clock
+    GPIOA->MODER |= (1 << (LED_PIN * 2));  // Set PA5 as output
+}
+
+void LED_On(void) {
+    GPIOA->BSRR = (1 << LED_PIN);  // Set PA5
+}
+
+void LED_Off(void) {
+    GPIOA->BSRR = (1 << (LED_PIN + 16));  // Reset PA5
+}
+
+void LED_Flash(void) {
+    LED_On();
+    for (volatile int i = 0; i < 100000; i++);  // Simple delay
+    LED_Off();
+    for (volatile int i = 0; i < 100000; i++);  // Simple delay
+}
+
+void UART2_Init(void) {
+    RCC->APB1ENR |= 0x20000;  // Enable UART2 clock
+    RCC->AHB1ENR |= 0x01;     // Enable GPIOA clock
+
+    // Configure PA2 and PA3 for UART2
+    GPIOA->MODER &= ~0x00F0;
+    GPIOA->MODER |= 0x00A0;   // PA2, PA3 to alternate function
+    GPIOA->AFR[0] &= ~0xFF00;
+    GPIOA->AFR[0] |= 0x7700;  // PA2, PA3 to AF7 (UART2)
+
+    USART2->BRR = 0x008B;     // 115200 baud rate @ 16 MHz
+    USART2->CR1 = 0x000C;     // Enable Tx and Rx
+    USART2->CR1 |= 0x2000;    // Enable UART
+}
+
+void UART2_Write(int ch) {
+    while (!(USART2->SR & USART_SR_TXE)) {} // Wait for TX buffer empty
+    USART2->DR = (ch & 0xFF);
+    LED_Flash();  // Flash LED when writing to UART
+}
+
+int UART2_Read(void) {
+    while (!(USART2->SR & USART_SR_RXNE)) {} // Wait for RX buffer not empty
+    LED_Flash();  // Flash LED when reading from UART
+    return USART2->DR;
+}
+
+int fputc(int ch, FILE *f) {
+    UART2_Write(ch);
+    return ch;
+}
+
+int fgetc(FILE *f) {
+    return UART2_Read();
+}
+
+int main(void) {
+    SystemInit();
+    UART2_Init();
+    LED_Init();
+
+    int x, y;
+    char userMark, computerMark;
+    srand(time(NULL));
+
+    printf("Choose your mark (X or O): ");
+    scanf(" %c", &userMark);
+
+    if (userMark == 'X' || userMark == 'x') {
+        computerMark = 'O';
+    } else {
+        computerMark = 'X';
+    }
+
+    initializeBoard();
+
+    while (1) {
+        displayBoard();
+
+        // User's turn
+        printf("Enter row and column (0-2) for your move: ");
+        scanf("%d %d", &x, &y);
+        if (board[x][y] != '-') {
+            printf("Invalid move. Try again.\n");
+            continue;
+        }
+        board[x][y] = userMark;
+
+        if (checkWin(userMark)) {
+            displayBoard();
+            printf("You win!\n");
+            break;
+        }
+
+        if (checkDraw()) {
+            displayBoard();
+            printf("It's a draw!\n");
+            break;
+        }
+
+        // Computer's turn
+        do {
+            x = rand() % 3;
+            y = rand() % 3;
+        } while (board[x][y] != '-');
+        board[x][y] = computerMark;
+
+        if (checkWin(computerMark)) {
+            displayBoard();
+            printf("Computer wins!\n");
+            break;
+        }
+
+        if (checkDraw()) {
+            displayBoard();
+            printf("It's a draw!\n");
+            break;
+        }
+    }
+
+    return 0;
+}
